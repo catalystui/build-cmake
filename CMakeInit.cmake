@@ -337,3 +337,91 @@ function(define_wayland_protocol protocol_xml protocol_header_name protocol_sour
     message(STATUS "Linked Wayland header to '${GENERATED_LINK_HEADER}'")
     message(STATUS "Linked Wayland source to '${GENERATED_LINK_SOURCE}'")
 endfunction()
+
+function(define_test_executables)
+    set(OPTIONS)
+    set(ONE_VALUE_ARGS)
+    set(MULTI_VALUE_ARGS STATIC_DEPENDS SHARED_DEPENDS)
+
+    cmake_parse_arguments(TESTS
+        "${OPTIONS}"
+        "${ONE_VALUE_ARGS}"
+        "${MULTI_VALUE_ARGS}"
+        ${ARGN}
+    )
+
+    if(EXISTS "${CMAKE_SOURCE_DIR}/test")
+        file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
+            "${CMAKE_SOURCE_DIR}/test/*.cpp"
+        )
+
+        if(TEST_SOURCES)
+            message(STATUS "Test source files found, configuring test executables...")
+
+            foreach(TEST_SOURCE ${TEST_SOURCES})
+                get_filename_component(TEST_NAME "${TEST_SOURCE}" NAME_WE)
+
+                add_executable(${TEST_NAME}
+                    "${TEST_SOURCE}"
+                )
+
+                if(TEST_NAME STREQUAL "exe")
+                    if(TARGET_PLATFORM_WIN32)
+                        set_target_properties(${TEST_NAME} PROPERTIES
+                            WIN32_EXECUTABLE TRUE
+                        )
+
+                        message(STATUS "Configured ${TEST_NAME} as a Windows GUI application")
+                    elseif(TARGET_PLATFORM_DARWIN)
+                        set_target_properties(${TEST_NAME} PROPERTIES
+                            MACOSX_BUNDLE TRUE
+                            MACOSX_BUNDLE_BUNDLE_NAME "${TEST_NAME}"
+                            MACOSX_BUNDLE_GUI_IDENTIFIER "org.catalystui.${TEST_NAME}"
+                        )
+
+                        message(STATUS "Configured ${TEST_NAME} as a macOS GUI application")
+                    elseif(TARGET_PLATFORM_LINUX AND TESTS_SHARED_DEPENDS)
+                        add_executable(${TEST_NAME}_shared
+                            "${TEST_SOURCE}"
+                        )
+
+                        configure_target(
+                            NAME ${TEST_NAME}_shared
+                            FOLDER "test"
+                            SUBDIR "test/"
+                            TARGETS ${TEST_NAME}_shared
+                            DEPENDS
+                                ${TESTS_SHARED_DEPENDS}
+                        )
+
+                        message(STATUS "Configured ${TEST_NAME}_shared as a Linux GUI application")
+                    endif()
+                endif()
+
+                if(MSVC)
+                    target_link_options(${TEST_NAME} PRIVATE
+                        /ENTRY:mainCRTStartup
+                    )
+                endif()
+
+                configure_target(
+                    NAME ${TEST_NAME}
+                    FOLDER "test"
+                    SUBDIR "test/"
+                    TARGETS ${TEST_NAME}
+                    DEPENDS
+                        ${TESTS_STATIC_DEPENDS}
+                )
+            endforeach()
+        else()
+            message(STATUS "No .cpp test source files found, skipping test executable configuration")
+            message(STATUS "    To configure test executables, add one or more .cpp files")
+            message(STATUS "    to the 'test' directory, then reload the CMake configuration.")
+        endif()
+    else()
+        message(STATUS "No test directory found, skipping test executable configuration")
+        message(STATUS "    To configure test executables, create a 'test' directory")
+        message(STATUS "    in the project root and add one or more .cpp files,")
+        message(STATUS "    then reload the CMake configuration.")
+    endif()
+endfunction()

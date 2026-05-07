@@ -95,7 +95,7 @@ function(configure target_vendor target_system target_architecture)
         set(CMAKE_SHARED_LIBRARY_PREFIX "lib" PARENT_SCOPE)
         set(CMAKE_STATIC_LIBRARY_PREFIX "lib" PARENT_SCOPE)
         message(STATUS "Using 'lib' prefix (UNIX-like conventions) for shared and static libraries")
-    else(TARGET_PLATFORM_WIN32)
+    else()
         set(CMAKE_SHARED_LIBRARY_PREFIX "" PARENT_SCOPE)
         set(CMAKE_STATIC_LIBRARY_PREFIX "" PARENT_SCOPE)
         message(STATUS "Stripped library prefixes for shared and static libraries")
@@ -145,10 +145,23 @@ function(configure_target)
         string(TOLOWER "${ARG_SUBDIR}" ARG_SUBDIR_LOWER)
     endif()
     foreach(TARGET_NAME ${ARG_TARGETS})
+        get_target_property(CONFIGURE_TARGET_TYPE ${TARGET_NAME} TYPE)
+
         # Set output name and folder if specified
         if(NOT "${ARG_NAME}" STREQUAL "")
             set(CONFIGURE_OUTPUT_NAME "${ARG_NAME}")
-            if(TARGET_PLATFORM_DARWIN OR TARGET_PLATFORM_LINUX)
+            if(
+                CONFIGURE_TARGET_TYPE STREQUAL "STATIC_LIBRARY" OR
+                CONFIGURE_TARGET_TYPE STREQUAL "SHARED_LIBRARY" OR
+                CONFIGURE_TARGET_TYPE STREQUAL "MODULE_LIBRARY"
+            )
+                string(TOLOWER "${CONFIGURE_OUTPUT_NAME}" CONFIGURE_OUTPUT_NAME)
+
+                # Strip lib postfix on non-Windows platforms since we prefer 'libxxxx' naming convention for libraries
+                if(NOT TARGET_PLATFORM_WIN32)
+                    string(REGEX REPLACE "lib$" "" CONFIGURE_OUTPUT_NAME "${CONFIGURE_OUTPUT_NAME}")
+                endif()
+            elseif(TARGET_PLATFORM_DARWIN OR TARGET_PLATFORM_LINUX)
                 string(TOLOWER "${CONFIGURE_OUTPUT_NAME}" CONFIGURE_OUTPUT_NAME)
             endif()
             set_target_properties(${TARGET_NAME} PROPERTIES
@@ -162,7 +175,6 @@ function(configure_target)
         endif()
 
         # Set output subdirectory if specified
-        get_target_property(CONFIGURE_TARGET_TYPE ${TARGET_NAME} TYPE)
         if(NOT "${ARG_SUBDIR_LOWER}" STREQUAL "")
             if(CONFIGURE_TARGET_TYPE STREQUAL "EXECUTABLE")
                 set_target_properties(${TARGET_NAME} PROPERTIES
@@ -173,7 +185,7 @@ function(configure_target)
                     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}/${ARG_SUBDIR_LOWER}"
                 )
             elseif(CONFIGURE_TARGET_TYPE STREQUAL "SHARED_LIBRARY")
-                if(WIN32)
+                if(TARGET_PLATFORM_WIN32)
                     set_target_properties(${TARGET_NAME} PROPERTIES
                         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${ARG_SUBDIR_LOWER}"
                         ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}/${ARG_SUBDIR_LOWER}"

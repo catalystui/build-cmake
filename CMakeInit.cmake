@@ -7,6 +7,11 @@ execute_process(
     ERROR_QUIET
 )
 
+# Enable Windows resources at file scope for MSVC DLL version metadata.
+if(WIN32 AND MSVC AND NOT CMAKE_RC_COMPILER_LOADED)
+    enable_language(RC)
+endif()
+
 function(metadata name version_major version_minor version_patch version_dash description)
     set(METADATA_NAME ${name})
     set(METADATA_VERSION_MAJOR ${version_major})
@@ -55,7 +60,7 @@ function(configure target_vendor target_system target_architecture)
     endif()
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}" PARENT_SCOPE)
     set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}" PARENT_SCOPE)
-    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}/lib" PARENT_SCOPE)
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}" PARENT_SCOPE)
 
     # Identify target platform
     if(TARGET_VENDOR STREQUAL "microsoft" AND (TARGET_SYSTEM MATCHES "^nt" OR TARGET_SYSTEM MATCHES "^win"))
@@ -91,14 +96,13 @@ function(configure target_vendor target_system target_architecture)
     endif()
 
     # Set library prefixes based on platform conventions
+    set(CMAKE_STATIC_LIBRARY_PREFIX "lib" PARENT_SCOPE)
     if(TARGET_PLATFORM_DARWIN OR TARGET_PLATFORM_LINUX)
         set(CMAKE_SHARED_LIBRARY_PREFIX "lib" PARENT_SCOPE)
-        set(CMAKE_STATIC_LIBRARY_PREFIX "lib" PARENT_SCOPE)
         message(STATUS "Using 'lib' prefix (UNIX-like conventions) for shared and static libraries")
     else()
         set(CMAKE_SHARED_LIBRARY_PREFIX "" PARENT_SCOPE)
-        set(CMAKE_STATIC_LIBRARY_PREFIX "" PARENT_SCOPE)
-        message(STATUS "Stripped library prefixes for shared and static libraries")
+        message(STATUS "Using no shared library prefix and a static library lib prefix")
     endif()
 
     # Identify UNICODE support
@@ -157,16 +161,47 @@ function(configure_target)
             )
                 string(TOLOWER "${CONFIGURE_OUTPUT_NAME}" CONFIGURE_OUTPUT_NAME)
 
-                # Strip lib postfix on non-Windows platforms since we prefer 'libxxxx' naming convention for libraries
-                if(NOT TARGET_PLATFORM_WIN32)
-                    string(REGEX REPLACE "lib$" "" CONFIGURE_OUTPUT_NAME "${CONFIGURE_OUTPUT_NAME}")
-                endif()
+                # The lib marker is an artifact prefix, not part of the base name.
+                string(REGEX REPLACE "lib$" "" CONFIGURE_OUTPUT_NAME "${CONFIGURE_OUTPUT_NAME}")
             elseif(TARGET_PLATFORM_DARWIN OR TARGET_PLATFORM_LINUX)
                 string(TOLOWER "${CONFIGURE_OUTPUT_NAME}" CONFIGURE_OUTPUT_NAME)
             endif()
             set_target_properties(${TARGET_NAME} PROPERTIES
                 OUTPUT_NAME "${CONFIGURE_OUTPUT_NAME}"
             )
+            if(CONFIGURE_TARGET_TYPE STREQUAL "STATIC_LIBRARY")
+                set_target_properties(${TARGET_NAME} PROPERTIES PREFIX "lib")
+            elseif(CONFIGURE_TARGET_TYPE STREQUAL "SHARED_LIBRARY")
+                if(DEFINED METADATA_VERSION_MAJOR AND DEFINED METADATA_VERSION_MINOR AND DEFINED METADATA_VERSION_PATCH)
+                    set(CONFIGURE_LIBRARY_VERSION "${METADATA_VERSION_MAJOR}.${METADATA_VERSION_MINOR}.${METADATA_VERSION_PATCH}")
+                    set(CONFIGURE_ABI_VERSION "${METADATA_VERSION_MAJOR}.${METADATA_VERSION_MINOR}")
+                    if(TARGET_PLATFORM_WIN32)
+                        set(CONFIGURE_DLL_NAME "${CONFIGURE_OUTPUT_NAME}${METADATA_VERSION_MAJOR}${METADATA_VERSION_MINOR}")
+                        set_target_properties(${TARGET_NAME} PROPERTIES
+                            PREFIX ""
+                            IMPORT_PREFIX ""
+                            RUNTIME_OUTPUT_NAME "${CONFIGURE_DLL_NAME}"
+                            ARCHIVE_OUTPUT_NAME "${CONFIGURE_OUTPUT_NAME}"
+                            VERSION "${CONFIGURE_LIBRARY_VERSION}"
+                        )
+                        if(MSVC)
+                            set(CONFIGURE_VERSION_RESOURCE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}.rc")
+                            configure_file(
+                                "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/CMakeVersion.rc.in"
+                                "${CONFIGURE_VERSION_RESOURCE}"
+                                @ONLY
+                            )
+                            target_sources(${TARGET_NAME} PRIVATE "${CONFIGURE_VERSION_RESOURCE}")
+                        endif()
+                    elseif(TARGET_PLATFORM_DARWIN OR TARGET_PLATFORM_LINUX)
+                        set_target_properties(${TARGET_NAME} PROPERTIES
+                            PREFIX "lib"
+                            VERSION "${CONFIGURE_LIBRARY_VERSION}"
+                            SOVERSION "${CONFIGURE_ABI_VERSION}"
+                        )
+                    endif()
+                endif()
+            endif()
         endif()
         if(NOT "${ARG_FOLDER}" STREQUAL "")
             set_target_properties(${TARGET_NAME} PROPERTIES

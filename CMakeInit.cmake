@@ -66,10 +66,9 @@ function(configure target_vendor target_system target_architecture)
         file(MAKE_DIRECTORY "${OUTPUT_DIRECTORY}")
     endif()
 
-    # Executables go in the configuration root; all library artifacts go in lib/.
-    # Windows DLLs are runtime artifacts, so distinguish them by target type.
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}$<$<OR:$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>,$<STREQUAL:$<TARGET_PROPERTY:TYPE>,MODULE_LIBRARY>>:/lib>" PARENT_SCOPE)
-    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}/lib" PARENT_SCOPE)
+    # Runtime binaries go in the configuration root; linker inputs go in lib/.
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}" PARENT_SCOPE)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}" PARENT_SCOPE)
     set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}/lib" PARENT_SCOPE)
 
     # Identify target platform
@@ -113,6 +112,17 @@ function(configure target_vendor target_system target_architecture)
     else()
         set(CMAKE_SHARED_LIBRARY_PREFIX "" PARENT_SCOPE)
         message(STATUS "Using no shared library prefix and a static library lib prefix")
+    endif()
+
+    # Resolve runtime dependencies relative to the binary, not the build machine.
+    if(TARGET_PLATFORM_LINUX)
+        set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE PARENT_SCOPE)
+        set(CMAKE_INSTALL_RPATH "$ORIGIN" PARENT_SCOPE)
+    elseif(TARGET_PLATFORM_DARWIN)
+        set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE PARENT_SCOPE)
+        set(CMAKE_INSTALL_RPATH "@loader_path" PARENT_SCOPE)
+        set(CMAKE_INSTALL_NAME_DIR "@rpath" PARENT_SCOPE)
+        set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR TRUE PARENT_SCOPE)
     endif()
 
     # Identify UNICODE support
@@ -203,12 +213,6 @@ function(configure_target)
                             )
                             target_sources(${TARGET_NAME} PRIVATE "${CONFIGURE_VERSION_RESOURCE}")
                         endif()
-                    elseif(TARGET_PLATFORM_DARWIN OR TARGET_PLATFORM_LINUX)
-                        set_target_properties(${TARGET_NAME} PROPERTIES
-                            PREFIX "lib"
-                            VERSION "${CONFIGURE_LIBRARY_VERSION}"
-                            SOVERSION "${CONFIGURE_ABI_VERSION}"
-                        )
                     endif()
                 endif()
             endif()
@@ -244,6 +248,66 @@ function(configure_target)
                 set_target_properties(${TARGET_NAME} PROPERTIES
                     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/${ARG_SUBDIR_LOWER}"
                 )
+            endif()
+        endif()
+
+        # CMake's automatic namelink is always beside the versioned binary.
+        # Name the real Unix binary directly, set its ABI identity explicitly,
+        # and generate the runtime and development links in their proper directories.
+        if(NOT "${ARG_NAME}" STREQUAL "" AND CONFIGURE_TARGET_TYPE STREQUAL "SHARED_LIBRARY"
+            AND (TARGET_PLATFORM_DARWIN OR TARGET_PLATFORM_LINUX)
+            AND DEFINED METADATA_VERSION_MAJOR AND DEFINED METADATA_VERSION_MINOR AND DEFINED METADATA_VERSION_PATCH)
+            set(CONFIGURE_BASE_NAME "lib${CONFIGURE_OUTPUT_NAME}")
+            if(TARGET_PLATFORM_DARWIN)
+                set(CONFIGURE_SUFFIX ".${CONFIGURE_LIBRARY_VERSION}.dylib")
+                set(CONFIGURE_ABI_NAME "${CONFIGURE_BASE_NAME}.${CONFIGURE_ABI_VERSION}.dylib")
+                set(CONFIGURE_LINKER_NAME "${CONFIGURE_BASE_NAME}.dylib")
+                target_link_options(${TARGET_NAME} PRIVATE
+                    "LINKER:-install_name,@rpath/${CONFIGURE_ABI_NAME}"
+                    "LINKER:-compatibility_version,${CONFIGURE_ABI_VERSION}"
+                    "LINKER:-current_version,${CONFIGURE_LIBRARY_VERSION}"
+                )
+            else()
+                set(CONFIGURE_SUFFIX ".so.${CONFIGURE_LIBRARY_VERSION}")
+                set(CONFIGURE_ABI_NAME "${CONFIGURE_BASE_NAME}.so.${CONFIGURE_ABI_VERSION}")
+                set(CONFIGURE_LINKER_NAME "${CONFIGURE_BASE_NAME}.so")
+                target_link_options(${TARGET_NAME} PRIVATE "LINKER:-soname,${CONFIGURE_ABI_NAME}")
+            endif()
+            set_target_properties(${TARGET_NAME} PROPERTIES
+                PREFIX "lib"
+                SUFFIX "${CONFIGURE_SUFFIX}"
+                NO_SONAME TRUE
+            )
+            set(CONFIGURE_RUNTIME_DIR "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
+            set(CONFIGURE_LINKER_DIR "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}")
+            set(CONFIGURE_LINK_TARGET "../${CONFIGURE_ABI_NAME}")
+            if(NOT "${ARG_SUBDIR_LOWER}" STREQUAL "")
+                set(CONFIGURE_RUNTIME_DIR "${CONFIGURE_RUNTIME_DIR}/${ARG_SUBDIR_LOWER}")
+                set(CONFIGURE_LINKER_DIR "${CONFIGURE_LINKER_DIR}/${ARG_SUBDIR_LOWER}")
+                file(RELATIVE_PATH CONFIGURE_LINK_TARGET
+                    "/output/lib/${ARG_SUBDIR_LOWER}"
+                    "/output/${ARG_SUBDIR_LOWER}/${CONFIGURE_ABI_NAME}"
+                )
+            endif()
+            add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+                BYPRODUCTS
+                    "${CONFIGURE_RUNTIME_DIR}/${CONFIGURE_ABI_NAME}"
+                    "${CONFIGURE_LINKER_DIR}/${CONFIGURE_LINKER_NAME}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${CONFIGURE_LINKER_DIR}"
+                COMMAND ${CMAKE_COMMAND} -E create_symlink
+                    "$<TARGET_FILE_NAME:${TARGET_NAME}>"
+                    "${CONFIGURE_RUNTIME_DIR}/${CONFIGURE_ABI_NAME}"
+                COMMAND ${CMAKE_COMMAND} -E create_symlink
+                    "${CONFIGURE_LINK_TARGET}"
+                    "${CONFIGURE_LINKER_DIR}/${CONFIGURE_LINKER_NAME}"
+                VERBATIM
+            )
+        endif()
+
+        if(TARGET_PLATFORM_DARWIN AND CONFIGURE_TARGET_TYPE STREQUAL "EXECUTABLE")
+            get_target_property(CONFIGURE_IS_BUNDLE ${TARGET_NAME} MACOSX_BUNDLE)
+            if(CONFIGURE_IS_BUNDLE)
+                set_property(TARGET ${TARGET_NAME} APPEND PROPERTY INSTALL_RPATH "@executable_path/../../..")
             endif()
         endif()
 

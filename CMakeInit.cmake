@@ -57,10 +57,20 @@ function(configure target_vendor target_system target_architecture)
             endif()
         endforeach()
         set(OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}/$<LOWER_CASE:$<CONFIG>>")
+    else()
+        if(NOT CMAKE_BUILD_TYPE)
+            set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+        endif()
+        string(TOLOWER "${CMAKE_BUILD_TYPE}" CONFIG_LOWER)
+        set(OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}/${CONFIG_LOWER}")
+        file(MAKE_DIRECTORY "${OUTPUT_DIRECTORY}")
     endif()
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}" PARENT_SCOPE)
-    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}" PARENT_SCOPE)
-    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}" PARENT_SCOPE)
+
+    # Executables go in the configuration root; all library artifacts go in lib/.
+    # Windows DLLs are runtime artifacts, so distinguish them by target type.
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}$<$<OR:$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>,$<STREQUAL:$<TARGET_PROPERTY:TYPE>,MODULE_LIBRARY>>:/lib>" PARENT_SCOPE)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}/lib" PARENT_SCOPE)
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}/lib" PARENT_SCOPE)
 
     # Identify target platform
     if(TARGET_VENDOR STREQUAL "microsoft" AND (TARGET_SYSTEM MATCHES "^nt" OR TARGET_SYSTEM MATCHES "^win"))
@@ -435,7 +445,6 @@ function(define_test_executables)
                         configure_target(
                             NAME ${TEST_NAME}_shared
                             FOLDER "test"
-                            SUBDIR "test/"
                             TARGETS ${TEST_NAME}_shared
                             DEPENDS
                                 ${TESTS_SHARED_DEPENDS}
@@ -454,7 +463,6 @@ function(define_test_executables)
                 configure_target(
                     NAME ${TEST_NAME}
                     FOLDER "test"
-                    SUBDIR "test/"
                     TARGETS ${TEST_NAME}
                     DEPENDS
                         ${TESTS_STATIC_DEPENDS}

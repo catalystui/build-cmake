@@ -164,6 +164,43 @@ function(configure target_vendor target_system target_architecture)
     check_type_size("void*" TARGET_SIZEOF_VOID_P)
     set(TARGET_SIZEOF_VOID_P ${TARGET_SIZEOF_VOID_P} PARENT_SCOPE)
     message(STATUS "Determined size of void* pointer: ${TARGET_SIZEOF_VOID_P} bytes")
+
+    # Discover scalar storage sizes and floating-point format support without executing target code.
+    foreach(TYPE SHORT INT LONG FLOAT DOUBLE)
+        string(TOLOWER "${TYPE}" TYPE_NAME)
+        if(CMAKE_C_COMPILER_LOADED)
+            check_type_size("${TYPE_NAME}" TARGET_SIZEOF_${TYPE} LANGUAGE C)
+        elseif(CMAKE_CXX_COMPILER_LOADED)
+            check_type_size("${TYPE_NAME}" TARGET_SIZEOF_${TYPE} LANGUAGE CXX)
+        endif()
+        if(NOT TARGET_SIZEOF_${TYPE})
+            set(TARGET_SIZEOF_${TYPE} 0)
+        endif()
+        set(TARGET_SIZEOF_${TYPE} ${TARGET_SIZEOF_${TYPE}} PARENT_SCOPE)
+    endforeach()
+
+    # Require matching C/C++ toolchains before using C++ numeric_limits as evidence.
+    if(CMAKE_C_COMPILER_LOADED AND CMAKE_CXX_COMPILER_LOADED AND
+       CMAKE_C_COMPILER_ID STREQUAL CMAKE_CXX_COMPILER_ID AND
+       CMAKE_C_COMPILER_VERSION STREQUAL CMAKE_CXX_COMPILER_VERSION)
+        include(CheckCXXSourceCompiles)
+        check_cxx_source_compiles("#include <limits>
+typedef char check[(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559) ? 1 : -1];
+int main() { return 0; }" TARGET_IEC559_SINGLE)
+        check_cxx_source_compiles("#include <limits>
+typedef char check[(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559) ? 1 : -1];
+int main() { return 0; }" TARGET_IEC559_DOUBLE)
+    else()
+        set(TARGET_IEC559_SINGLE 0)
+        set(TARGET_IEC559_DOUBLE 0)
+    endif()
+    foreach(FORMAT SINGLE DOUBLE)
+        if(TARGET_IEC559_${FORMAT})
+            set(TARGET_IEC559_${FORMAT} 1 PARENT_SCOPE)
+        else()
+            set(TARGET_IEC559_${FORMAT} 0 PARENT_SCOPE)
+        endif()
+    endforeach()
 endfunction()
 
 function(configure_target)
@@ -363,6 +400,13 @@ function(define config_file_name config_header_name)
         TARGET_PLATFORM_LINUX=${TARGET_PLATFORM_LINUX}
         TARGET_STDC_VERSION=${TARGET_STDC_VERSION}
         TARGET_SIZEOF_VOID_P=${TARGET_SIZEOF_VOID_P}
+        TARGET_SIZEOF_SHORT=${TARGET_SIZEOF_SHORT}
+        TARGET_SIZEOF_INT=${TARGET_SIZEOF_INT}
+        TARGET_SIZEOF_LONG=${TARGET_SIZEOF_LONG}
+        TARGET_SIZEOF_FLOAT=${TARGET_SIZEOF_FLOAT}
+        TARGET_SIZEOF_DOUBLE=${TARGET_SIZEOF_DOUBLE}
+        TARGET_IEC559_SINGLE=${TARGET_IEC559_SINGLE}
+        TARGET_IEC559_DOUBLE=${TARGET_IEC559_DOUBLE}
         TARGET_SUPPORTS_UNICODE=${TARGET_SUPPORTS_UNICODE}
         "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>:TARGET_SHARED=1>"
     )
@@ -380,6 +424,13 @@ function(define config_file_name config_header_name)
     message(STATUS "Added compile definition TARGET_PLATFORM_LINUX=${TARGET_PLATFORM_LINUX}")
     message(STATUS "Added compile definition TARGET_STDC_VERSION=${TARGET_STDC_VERSION}")
     message(STATUS "Added compile definition TARGET_SIZEOF_VOID_P=${TARGET_SIZEOF_VOID_P}")
+    message(STATUS "Added compile definition TARGET_SIZEOF_SHORT=${TARGET_SIZEOF_SHORT}")
+    message(STATUS "Added compile definition TARGET_SIZEOF_INT=${TARGET_SIZEOF_INT}")
+    message(STATUS "Added compile definition TARGET_SIZEOF_LONG=${TARGET_SIZEOF_LONG}")
+    message(STATUS "Added compile definition TARGET_SIZEOF_FLOAT=${TARGET_SIZEOF_FLOAT}")
+    message(STATUS "Added compile definition TARGET_SIZEOF_DOUBLE=${TARGET_SIZEOF_DOUBLE}")
+    message(STATUS "Added compile definition TARGET_IEC559_SINGLE=${TARGET_IEC559_SINGLE}")
+    message(STATUS "Added compile definition TARGET_IEC559_DOUBLE=${TARGET_IEC559_DOUBLE}")
     message(STATUS "Added compile definition TARGET_SUPPORTS_UNICODE=${TARGET_SUPPORTS_UNICODE}")
     message(STATUS "Added compile definition TARGET_SHARED=1 for shared library targets")
 

@@ -165,6 +165,85 @@ function(configure target_vendor target_system target_architecture)
     set(TARGET_SIZEOF_VOID_P ${TARGET_SIZEOF_VOID_P} PARENT_SCOPE)
     message(STATUS "Determined size of void* pointer: ${TARGET_SIZEOF_VOID_P} bytes")
 
+    # Find an unsigned object-address representation without executing target code.
+    # __UINTPTR_TYPE__ and __int3264 support C90; uintptr_t is a fallback when provided.
+    include(CheckCSourceCompiles)
+    set(TARGET_ADDRESS_KIND 0)
+    set(TARGET_SIZEOF_ADDRESS 0)
+
+    check_c_source_compiles("
+#ifndef __UINTPTR_TYPE__
+#error No compiler-provided address integer
+#endif
+typedef __UINTPTR_TYPE__ address_type;
+typedef char address_width_check[(sizeof(address_type) >= sizeof(void*)) ? 1 : -1];
+int main(void) {
+    void* pointer = 0;
+    address_type address = (address_type)pointer;
+    pointer = (void*)address;
+    return pointer != 0;
+}
+" TARGET_HAS_COMPILER_UINTPTR)
+    if(TARGET_HAS_COMPILER_UINTPTR)
+        check_type_size("__UINTPTR_TYPE__" TARGET_SIZEOF_COMPILER_UINTPTR LANGUAGE C)
+        if(TARGET_SIZEOF_COMPILER_UINTPTR)
+            set(TARGET_ADDRESS_KIND 1)
+            set(TARGET_SIZEOF_ADDRESS ${TARGET_SIZEOF_COMPILER_UINTPTR})
+        endif()
+    endif()
+
+    if(TARGET_ADDRESS_KIND EQUAL 0 AND MSVC)
+        check_c_source_compiles("
+#ifndef _MSC_VER
+#error No Microsoft pointer-width integer
+#endif
+typedef unsigned __int3264 address_type;
+typedef char address_width_check[(sizeof(address_type) >= sizeof(void*)) ? 1 : -1];
+int main(void) {
+    void* pointer = 0;
+    address_type address = (address_type)pointer;
+    pointer = (void*)address;
+    return pointer != 0;
+}
+" TARGET_HAS_MSVC_UINTPTR)
+        if(TARGET_HAS_MSVC_UINTPTR)
+            check_type_size("unsigned __int3264" TARGET_SIZEOF_MSVC_UINTPTR LANGUAGE C)
+            if(TARGET_SIZEOF_MSVC_UINTPTR)
+                set(TARGET_ADDRESS_KIND 2)
+                set(TARGET_SIZEOF_ADDRESS ${TARGET_SIZEOF_MSVC_UINTPTR})
+            endif()
+        endif()
+    endif()
+
+    if(TARGET_ADDRESS_KIND EQUAL 0)
+        check_c_source_compiles("
+#include <stdint.h>
+#ifndef UINTPTR_MAX
+#error uintptr_t is unavailable
+#endif
+typedef char address_width_check[(sizeof(uintptr_t) >= sizeof(void*)) ? 1 : -1];
+int main(void) {
+    void* pointer = 0;
+    uintptr_t address = (uintptr_t)pointer;
+    pointer = (void*)address;
+    return pointer != 0;
+}
+" TARGET_HAS_STDINT_UINTPTR)
+        if(TARGET_HAS_STDINT_UINTPTR)
+            set(CMAKE_EXTRA_INCLUDE_FILES stdint.h)
+            check_type_size("uintptr_t" TARGET_SIZEOF_STDINT_UINTPTR LANGUAGE C)
+            unset(CMAKE_EXTRA_INCLUDE_FILES)
+            if(TARGET_SIZEOF_STDINT_UINTPTR)
+                set(TARGET_ADDRESS_KIND 3)
+                set(TARGET_SIZEOF_ADDRESS ${TARGET_SIZEOF_STDINT_UINTPTR})
+            endif()
+        endif()
+    endif()
+
+    set(TARGET_ADDRESS_KIND ${TARGET_ADDRESS_KIND} PARENT_SCOPE)
+    set(TARGET_SIZEOF_ADDRESS ${TARGET_SIZEOF_ADDRESS} PARENT_SCOPE)
+    message(STATUS "Address integer type: ${TARGET_ADDRESS_KIND}, size: ${TARGET_SIZEOF_ADDRESS} bytes (0 means unavailable)")
+
     # Discover scalar storage sizes and floating-point format support without executing target code.
     foreach(TYPE SHORT INT LONG FLOAT DOUBLE)
         string(TOLOWER "${TYPE}" TYPE_NAME)
@@ -400,6 +479,8 @@ function(define config_file_name config_header_name)
         TARGET_PLATFORM_LINUX=${TARGET_PLATFORM_LINUX}
         TARGET_STDC_VERSION=${TARGET_STDC_VERSION}
         TARGET_SIZEOF_VOID_P=${TARGET_SIZEOF_VOID_P}
+        TARGET_ADDRESS_KIND=${TARGET_ADDRESS_KIND}
+        TARGET_SIZEOF_ADDRESS=${TARGET_SIZEOF_ADDRESS}
         TARGET_SIZEOF_SHORT=${TARGET_SIZEOF_SHORT}
         TARGET_SIZEOF_INT=${TARGET_SIZEOF_INT}
         TARGET_SIZEOF_LONG=${TARGET_SIZEOF_LONG}

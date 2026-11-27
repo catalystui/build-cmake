@@ -7,6 +7,16 @@ execute_process(
     ERROR_QUIET
 )
 
+# GCC's Objective-C frontends use the same drivers as C and C++.
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND NOT CMAKE_OBJC_COMPILER AND "$ENV{OBJC}" STREQUAL "")
+        set(CMAKE_OBJC_COMPILER "${CMAKE_C_COMPILER}")
+    endif()
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND NOT CMAKE_OBJCXX_COMPILER AND "$ENV{OBJCXX}" STREQUAL "")
+        set(CMAKE_OBJCXX_COMPILER "${CMAKE_CXX_COMPILER}")
+    endif()
+endif()
+
 # Enable Windows resources at file scope for MSVC and MinGW DLL version metadata.
 if(WIN32 AND (MSVC OR MINGW) AND NOT CMAKE_RC_COMPILER_LOADED)
     enable_language(RC)

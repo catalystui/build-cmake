@@ -473,8 +473,6 @@
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "gcc-16",
                 "CMAKE_CXX_COMPILER": "g++-16",
-                "CMAKE_OBJC_COMPILER": "gcc-16",
-                "CMAKE_OBJCXX_COMPILER": "g++-16",
                 "CMAKE_SYSTEM_NAME": "Darwin",
                 "CMAKE_OSX_DEPLOYMENT_TARGET": "15.7",
                 "TARGET_VENDOR": "apple",

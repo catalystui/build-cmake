@@ -393,28 +393,35 @@
             }
         },
         {
-            "name": "gcc16",
+            "name": "gcc-ninja",
             "hidden": true,
             "generator": "Ninja Multi-Config",
-            "condition": {
-                "type": "equals",
-                "lhs": "${hostSystemName}",
-                "rhs": "Linux"
-            },
             "cacheVariables": {
                 "CMAKE_CONFIGURATION_TYPES": "Debug;Release",
                 "CMAKE_VERBOSE_MAKEFILE": "ON",
                 "CMAKE_C_STANDARD": "23",
                 "CMAKE_C_STANDARD_REQUIRED": "ON",
                 "CMAKE_C_EXTENSIONS": "OFF",
-                "CMAKE_C_COMPILER": "/usr/bin/gcc-16",
                 "CMAKE_CXX_STANDARD": "23",
                 "CMAKE_CXX_STANDARD_REQUIRED": "ON",
-                "CMAKE_CXX_EXTENSIONS": "OFF",
+                "CMAKE_CXX_EXTENSIONS": "OFF"
+            }
+        },
+        {
+            "name": "gcc16",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "/usr/bin/gcc-16",
                 "CMAKE_CXX_COMPILER": "/usr/bin/g++-16",
                 "CMAKE_SYSTEM_NAME": "Linux",
                 "TARGET_VENDOR": "linux"
-            }
+            },
+            "inherits": "gcc-ninja"
         },
         {
             "name": "gcc16-linux7.0",
@@ -452,6 +459,70 @@
             "binaryDir": "${sourceDir}/target/gcc16-linux7.0-arm64",
             "cacheVariables": {
                 "TARGET_ARCHITECTURE": "arm64"
+            }
+        },
+        {
+            "name": "gcc16-darwin24.6",
+            "hidden": true,
+            "inherits": "gcc-ninja",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            },
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc-16",
+                "CMAKE_CXX_COMPILER": "g++-16",
+                "CMAKE_OBJC_COMPILER": "gcc-16",
+                "CMAKE_OBJCXX_COMPILER": "g++-16",
+                "CMAKE_SYSTEM_NAME": "Darwin",
+                "CMAKE_OSX_DEPLOYMENT_TARGET": "15.7",
+                "TARGET_VENDOR": "apple",
+                "TARGET_SYSTEM": "darwin24.6"
+            }
+        },
+        {
+            "name": "gcc16-darwin24.6-x64",
+            "displayName": "macOS Darwin 24.6 (X64, GCC)",
+            "description": "Configure native GCC (v16) with Ninja Multi-Config; requires a GCC toolchain for the selected architecture on PATH",
+            "inherits": "gcc16-darwin24.6",
+            "binaryDir": "${sourceDir}/target/gcc16-darwin24.6-x64",
+            "cacheVariables": {
+                "CMAKE_OSX_ARCHITECTURES": "x86_64",
+                "TARGET_ARCHITECTURE": "x64"
+            }
+        },
+        {
+            "name": "gcc16-darwin24.6-arm64",
+            "displayName": "macOS Darwin 24.6 (ARM64, GCC)",
+            "description": "Configure native GCC (v16) with Ninja Multi-Config; requires a GCC toolchain for the selected architecture on PATH",
+            "inherits": "gcc16-darwin24.6",
+            "binaryDir": "${sourceDir}/target/gcc16-darwin24.6-arm64",
+            "cacheVariables": {
+                "CMAKE_OSX_ARCHITECTURES": "arm64",
+                "TARGET_ARCHITECTURE": "arm64"
+            }
+        },
+        {
+            "name": "gcc-mingw-nt10.0-x64",
+            "displayName": "Windows NT 10.0 (x64, GCC)",
+            "description": "Configure native Windows x64 using MinGW-w64 GCC and Ninja Multi-Config; use the MSYS2 UCRT64 toolchain on PATH",
+            "inherits": "gcc-ninja",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "binaryDir": "${sourceDir}/target/gcc-mingw-nt10.0-x64",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "x86_64-w64-mingw32-gcc",
+                "CMAKE_CXX_COMPILER": "x86_64-w64-mingw32-g++",
+                "CMAKE_RC_COMPILER": "x86_64-w64-mingw32-windres",
+                "CMAKE_SYSTEM_NAME": "Windows",
+                "CMAKE_SYSTEM_PROCESSOR": "x86_64",
+                "TARGET_VENDOR": "microsoft",
+                "TARGET_SYSTEM": "nt10.0",
+                "TARGET_ARCHITECTURE": "x64"
             }
         }
     ],
@@ -707,6 +778,48 @@
             "configurePreset": "gcc16-linux7.0-arm64",
             "displayName": "Release",
             "description": "Build with GCC (v16) for Linux 7.0 (ARM64)"
+        },
+        {
+            "name": "gcc16-darwin24.6-x64-debug",
+            "configuration": "Debug",
+            "configurePreset": "gcc16-darwin24.6-x64",
+            "displayName": "Debug",
+            "description": "Build Debug with GCC and Ninja Multi-Config for macOS Darwin 24.6 (X64, GCC)"
+        },
+        {
+            "name": "gcc16-darwin24.6-x64-release",
+            "configuration": "Release",
+            "configurePreset": "gcc16-darwin24.6-x64",
+            "displayName": "Release",
+            "description": "Build Release with GCC and Ninja Multi-Config for macOS Darwin 24.6 (X64, GCC)"
+        },
+        {
+            "name": "gcc16-darwin24.6-arm64-debug",
+            "configuration": "Debug",
+            "configurePreset": "gcc16-darwin24.6-arm64",
+            "displayName": "Debug",
+            "description": "Build Debug with GCC and Ninja Multi-Config for macOS Darwin 24.6 (ARM64, GCC)"
+        },
+        {
+            "name": "gcc16-darwin24.6-arm64-release",
+            "configuration": "Release",
+            "configurePreset": "gcc16-darwin24.6-arm64",
+            "displayName": "Release",
+            "description": "Build Release with GCC and Ninja Multi-Config for macOS Darwin 24.6 (ARM64, GCC)"
+        },
+        {
+            "name": "gcc-mingw-nt10.0-x64-debug",
+            "configuration": "Debug",
+            "configurePreset": "gcc-mingw-nt10.0-x64",
+            "displayName": "Debug",
+            "description": "Build Debug with GCC and Ninja Multi-Config for Windows NT 10.0 (x64, GCC)"
+        },
+        {
+            "name": "gcc-mingw-nt10.0-x64-release",
+            "configuration": "Release",
+            "configurePreset": "gcc-mingw-nt10.0-x64",
+            "displayName": "Release",
+            "description": "Build Release with GCC and Ninja Multi-Config for Windows NT 10.0 (x64, GCC)"
         }
     ]
 }

@@ -7,8 +7,8 @@ execute_process(
     ERROR_QUIET
 )
 
-# Enable Windows resources at file scope for MSVC DLL version metadata.
-if(WIN32 AND MSVC AND NOT CMAKE_RC_COMPILER_LOADED)
+# Enable Windows resources at file scope for MSVC and MinGW DLL version metadata.
+if(WIN32 AND (MSVC OR MINGW) AND NOT CMAKE_RC_COMPILER_LOADED)
     enable_language(RC)
 endif()
 
@@ -324,7 +324,7 @@ function(configure_target)
                             ARCHIVE_OUTPUT_NAME "${CONFIGURE_OUTPUT_NAME}"
                             VERSION "${CONFIGURE_LIBRARY_VERSION}"
                         )
-                        if(MSVC)
+                        if(MSVC OR MINGW)
                             set(CONFIGURE_VERSION_RESOURCE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}.rc")
                             configure_file(
                                 "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/CMakeVersion.rc.in"

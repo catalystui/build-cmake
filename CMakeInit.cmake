@@ -1,12 +1,3 @@
-execute_process(
-    COMMAND git rev-parse --short=7 HEAD
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_HASH
-    RESULT_VARIABLE GIT_RESULT
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-)
-
 # GCC's Objective-C frontends use the same drivers as C and C++.
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND NOT CMAKE_OBJC_COMPILER AND "$ENV{OBJC}" STREQUAL "")
@@ -23,6 +14,16 @@ if(WIN32 AND (MSVC OR MINGW) AND NOT CMAKE_RC_COMPILER_LOADED)
 endif()
 
 function(metadata name version_major version_minor version_patch version_dash description)
+    # Resolve metadata from the calling project, not the consuming repository.
+    set(version_prerelease "")
+    execute_process(
+        COMMAND git rev-parse --short=7 HEAD
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+        OUTPUT_VARIABLE GIT_HASH
+        RESULT_VARIABLE GIT_RESULT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
     set(METADATA_NAME ${name})
     set(METADATA_VERSION_MAJOR ${version_major})
     set(METADATA_VERSION_MINOR ${version_minor})
@@ -48,34 +49,60 @@ function(metadata name version_major version_minor version_patch version_dash de
 endfunction()
 
 function(configure target_vendor target_system target_architecture)
-    set(TARGET_VENDOR ${target_vendor} PARENT_SCOPE)
-    set(TARGET_SYSTEM ${target_system} PARENT_SCOPE)
-    set(TARGET_ARCHITECTURE ${target_architecture} PARENT_SCOPE)
+    set(TARGET_VENDOR "${target_vendor}")
+    set(TARGET_SYSTEM "${target_system}")
+    set(TARGET_ARCHITECTURE "${target_architecture}")
+    set(TARGET_VENDOR "${TARGET_VENDOR}" PARENT_SCOPE)
+    set(TARGET_SYSTEM "${TARGET_SYSTEM}" PARENT_SCOPE)
+    set(TARGET_ARCHITECTURE "${TARGET_ARCHITECTURE}" PARENT_SCOPE)
 
-    set(OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/build/${target_vendor}/${target_system}")
-    if(NOT "${target_architecture}" STREQUAL "")
-        set(OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}/${target_architecture}")
+    # A Catalyst parent and its dependencies share a runtime directory. Other
+    # consumers get an isolated binary-tree layout and normal build-tree RPATHs.
+    set(CONFIGURE_TARGET_ID "${target_vendor}/${target_system}/${target_architecture}")
+    set(CONFIGURE_SHARED_OUTPUT FALSE)
+    if(NOT PROJECT_IS_TOP_LEVEL AND DEFINED CATALYST_BUILD_OUTPUT_ROOT)
+        if(NOT "${CATALYST_BUILD_TARGET_ID}" STREQUAL "${CONFIGURE_TARGET_ID}")
+            message(FATAL_ERROR "Catalyst dependency target does not match the consuming project.")
+        endif()
+        set(OUTPUT_DIRECTORY "${CATALYST_BUILD_OUTPUT_ROOT}")
+        set(CONFIGURE_SHARED_OUTPUT TRUE)
+    else()
+        if(PROJECT_IS_TOP_LEVEL)
+            set(OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/build/${target_vendor}/${target_system}")
+        else()
+            set(OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/build/${target_vendor}/${target_system}")
+        endif()
+        if(NOT "${target_architecture}" STREQUAL "")
+            set(OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}/${target_architecture}")
+        endif()
     endif()
+    set(CATALYST_BUILD_OUTPUT_ROOT "${OUTPUT_DIRECTORY}" PARENT_SCOPE)
+    set(CATALYST_BUILD_TARGET_ID "${CONFIGURE_TARGET_ID}" PARENT_SCOPE)
     message(STATUS "Setting output directory: ${OUTPUT_DIRECTORY}")
-    file(REMOVE_RECURSE "${OUTPUT_DIRECTORY}")
+    # Never remove existing build artifacts during configuration.
     file(MAKE_DIRECTORY "${OUTPUT_DIRECTORY}")
     get_property(CONFIGURE_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
     if(CONFIGURE_MULTI_CONFIG)
         # Restrict generated projects and configuration-dependent byproducts
         # to the two supported build configurations, including existing caches.
-        set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Build configurations" FORCE)
-        set(CMAKE_CONFIGURATION_TYPES "Debug;Release")
-        set(CMAKE_CONFIGURATION_TYPES "Debug;Release" PARENT_SCOPE)
+        if(PROJECT_IS_TOP_LEVEL)
+            set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Build configurations" FORCE)
+            set(CMAKE_CONFIGURATION_TYPES "Debug;Release")
+            set(CMAKE_CONFIGURATION_TYPES "Debug;Release" PARENT_SCOPE)
+        endif()
         foreach(CONFIG_NAME ${CMAKE_CONFIGURATION_TYPES})
             string(TOLOWER "${CONFIG_NAME}" CONFIG_LOWER)
             file(MAKE_DIRECTORY "${OUTPUT_DIRECTORY}/${CONFIG_LOWER}")
         endforeach()
         set(OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}/$<LOWER_CASE:$<CONFIG>>")
     else()
-        if(NOT CMAKE_BUILD_TYPE)
+        if(PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE)
             set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
         endif()
         string(TOLOWER "${CMAKE_BUILD_TYPE}" CONFIG_LOWER)
+        if("${CONFIG_LOWER}" STREQUAL "")
+            set(CONFIG_LOWER "default")
+        endif()
         set(OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}/${CONFIG_LOWER}")
         file(MAKE_DIRECTORY "${OUTPUT_DIRECTORY}")
     endif()
@@ -130,10 +157,18 @@ function(configure target_vendor target_system target_architecture)
 
     # Resolve runtime dependencies relative to the binary, not the build machine.
     if(TARGET_PLATFORM_LINUX)
-        set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE PARENT_SCOPE)
+        if(PROJECT_IS_TOP_LEVEL OR CONFIGURE_SHARED_OUTPUT)
+            set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE PARENT_SCOPE)
+        else()
+            set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE PARENT_SCOPE)
+        endif()
         set(CMAKE_INSTALL_RPATH "$ORIGIN" PARENT_SCOPE)
     elseif(TARGET_PLATFORM_DARWIN)
-        set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE PARENT_SCOPE)
+        if(PROJECT_IS_TOP_LEVEL OR CONFIGURE_SHARED_OUTPUT)
+            set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE PARENT_SCOPE)
+        else()
+            set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE PARENT_SCOPE)
+        endif()
         set(CMAKE_INSTALL_RPATH "@loader_path" PARENT_SCOPE)
         set(CMAKE_INSTALL_NAME_DIR "@rpath" PARENT_SCOPE)
         set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR TRUE PARENT_SCOPE)
@@ -408,6 +443,12 @@ function(configure_target)
                 SUFFIX "${CONFIGURE_SUFFIX}"
                 NO_SONAME TRUE
             )
+            # Expose the actual ABI/linker aliases for opt-in package installation.
+            # Their build-tree layout and naming remain unchanged.
+            set_target_properties(${TARGET_NAME} PROPERTIES
+                CATALYST_ABI_NAME "${CONFIGURE_ABI_NAME}"
+                CATALYST_LINKER_NAME "${CONFIGURE_LINKER_NAME}"
+            )
             set(CONFIGURE_RUNTIME_DIR "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
             set(CONFIGURE_LINKER_DIR "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}")
             set(CONFIGURE_LINK_TARGET "../${CONFIGURE_ABI_NAME}")
@@ -473,6 +514,13 @@ function(configure_target)
 endfunction()
 
 function(define config_file_name config_header_name)
+    # Nested directories inherit their parent's definitions. Remove only the
+    # shared helper's own definitions before installing this project's values.
+    get_directory_property(CONFIGURE_DEFINITIONS COMPILE_DEFINITIONS)
+    list(FILTER CONFIGURE_DEFINITIONS EXCLUDE REGEX "^(METADATA_(NAME|VERSION_MAJOR|VERSION_MINOR|VERSION_PATCH|VERSION|DESCRIPTION)|TARGET_(VENDOR|SYSTEM|ARCHITECTURE|PLATFORM_WIN32|PLATFORM_DARWIN|PLATFORM_LINUX|STDC_VERSION|SIZEOF_VOID_P|ADDRESS_KIND|SIZEOF_ADDRESS|SIZEOF_SHORT|SIZEOF_INT|SIZEOF_LONG|SIZEOF_FLOAT|SIZEOF_DOUBLE|IEC559_SINGLE|IEC559_DOUBLE|SUPPORTS_UNICODE))=")
+    list(REMOVE_ITEM CONFIGURE_DEFINITIONS "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>:TARGET_SHARED=1>")
+    set_property(DIRECTORY PROPERTY COMPILE_DEFINITIONS "${CONFIGURE_DEFINITIONS}")
+
     # Add compile definitions
     add_compile_definitions(
         METADATA_NAME=\"${METADATA_NAME}\"
@@ -526,29 +574,32 @@ function(define config_file_name config_header_name)
     message(STATUS "Added compile definition TARGET_SHARED=1 for shared library targets")
 
     # Process the configuration file/header
-    if(EXISTS "${CMAKE_SOURCE_DIR}/${config_file_name}")
-        set(GENERATED_REAL_DIR "${CMAKE_BINARY_DIR}/generated")
+    if(EXISTS "${PROJECT_SOURCE_DIR}/${config_file_name}")
+        set(GENERATED_REAL_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
         set(GENERATED_REAL_FILE "${GENERATED_REAL_DIR}/${config_header_name}")
-        get_filename_component(BINARY_PARENT_DIR "${CMAKE_BINARY_DIR}" DIRECTORY)
+        get_filename_component(BINARY_PARENT_DIR "${CMAKE_CURRENT_BINARY_DIR}" DIRECTORY)
         set(GENERATED_LINK_DIR "${BINARY_PARENT_DIR}/generated")
         set(GENERATED_LINK_FILE "${GENERATED_LINK_DIR}/${config_header_name}")
         file(MAKE_DIRECTORY "${GENERATED_REAL_DIR}")
-        file(MAKE_DIRECTORY "${GENERATED_LINK_DIR}")
         configure_file(
-            "${CMAKE_SOURCE_DIR}/${config_file_name}"
+            "${PROJECT_SOURCE_DIR}/${config_file_name}"
             "${GENERATED_REAL_FILE}"
             @ONLY
         )
-        file(REMOVE "${GENERATED_LINK_FILE}")
-        file(CREATE_LINK
-            "${GENERATED_REAL_FILE}"
-            "${GENERATED_LINK_FILE}"
-            SYMBOLIC
-            COPY_ON_ERROR
-        )
-        include_directories("${GENERATED_LINK_DIR}")
+        include_directories(BEFORE "${GENERATED_REAL_DIR}")
         message(STATUS "Processed configuration file '${config_file_name}' to generate '${GENERATED_REAL_FILE}'")
-        message(STATUS "Linked generated header to '${GENERATED_LINK_FILE}'")
+        if(PROJECT_IS_TOP_LEVEL)
+            # Preserve the existing preset/editor convenience alias for standalone builds.
+            file(MAKE_DIRECTORY "${GENERATED_LINK_DIR}")
+            file(REMOVE "${GENERATED_LINK_FILE}")
+            file(CREATE_LINK
+                "${GENERATED_REAL_FILE}"
+                "${GENERATED_LINK_FILE}"
+                SYMBOLIC
+                COPY_ON_ERROR
+            )
+            message(STATUS "Linked generated header to '${GENERATED_LINK_FILE}'")
+        endif()
     else()
         message(WARNING "Configuration file '${config_file_name}' not found, skipping generation of '${config_header_name}'")
     endif()
@@ -559,15 +610,14 @@ function(define_wayland_protocol protocol_xml protocol_header_name protocol_sour
     if(NOT EXISTS "${protocol_xml}")
         message(FATAL_ERROR "Wayland protocol XML not found: '${protocol_xml}'")
     endif()
-    set(GENERATED_REAL_DIR "${CMAKE_BINARY_DIR}/generated")
+    set(GENERATED_REAL_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
     set(GENERATED_REAL_HEADER "${GENERATED_REAL_DIR}/${protocol_header_name}")
     set(GENERATED_REAL_SOURCE "${GENERATED_REAL_DIR}/${protocol_source_name}")
-    get_filename_component(BINARY_PARENT_DIR "${CMAKE_BINARY_DIR}" DIRECTORY)
+    get_filename_component(BINARY_PARENT_DIR "${CMAKE_CURRENT_BINARY_DIR}" DIRECTORY)
     set(GENERATED_LINK_DIR "${BINARY_PARENT_DIR}/generated")
     set(GENERATED_LINK_HEADER "${GENERATED_LINK_DIR}/${protocol_header_name}")
     set(GENERATED_LINK_SOURCE "${GENERATED_LINK_DIR}/${protocol_source_name}")
     file(MAKE_DIRECTORY "${GENERATED_REAL_DIR}")
-    file(MAKE_DIRECTORY "${GENERATED_LINK_DIR}")
     execute_process(
         COMMAND "${WAYLAND_SCANNER}" client-header "${protocol_xml}" "${GENERATED_REAL_HEADER}"
         RESULT_VARIABLE WAYLAND_HEADER_RESULT
@@ -582,29 +632,37 @@ function(define_wayland_protocol protocol_xml protocol_header_name protocol_sour
     if(NOT WAYLAND_SOURCE_RESULT EQUAL 0)
         message(FATAL_ERROR "Failed to generate Wayland source '${GENERATED_REAL_SOURCE}' from '${protocol_xml}'")
     endif()
-    file(REMOVE "${GENERATED_LINK_HEADER}")
-    file(CREATE_LINK
-        "${GENERATED_REAL_HEADER}"
-        "${GENERATED_LINK_HEADER}"
-        SYMBOLIC
-        COPY_ON_ERROR
-    )
-    file(REMOVE "${GENERATED_LINK_SOURCE}")
-    file(CREATE_LINK
-        "${GENERATED_REAL_SOURCE}"
-        "${GENERATED_LINK_SOURCE}"
-        SYMBOLIC
-        COPY_ON_ERROR
-    )
-    include_directories("${GENERATED_LINK_DIR}")
+    include_directories(BEFORE "${GENERATED_REAL_DIR}")
+    if(PROJECT_IS_TOP_LEVEL)
+        file(MAKE_DIRECTORY "${GENERATED_LINK_DIR}")
+        file(REMOVE "${GENERATED_LINK_HEADER}")
+        file(CREATE_LINK
+            "${GENERATED_REAL_HEADER}"
+            "${GENERATED_LINK_HEADER}"
+            SYMBOLIC
+            COPY_ON_ERROR
+        )
+        file(REMOVE "${GENERATED_LINK_SOURCE}")
+        file(CREATE_LINK
+            "${GENERATED_REAL_SOURCE}"
+            "${GENERATED_LINK_SOURCE}"
+            SYMBOLIC
+            COPY_ON_ERROR
+        )
+        message(STATUS "Linked Wayland header to '${GENERATED_LINK_HEADER}'")
+        message(STATUS "Linked Wayland source to '${GENERATED_LINK_SOURCE}'")
+    else()
+        set(GENERATED_LINK_HEADER "${GENERATED_REAL_HEADER}")
+        set(GENERATED_LINK_SOURCE "${GENERATED_REAL_SOURCE}")
+    endif()
     set(WAYLAND_PROTOCOL_HEADER "${GENERATED_LINK_HEADER}" PARENT_SCOPE)
     set(WAYLAND_PROTOCOL_SOURCE "${GENERATED_LINK_SOURCE}" PARENT_SCOPE)
     message(STATUS "Generated Wayland header '${GENERATED_REAL_HEADER}'")
     message(STATUS "Generated Wayland source '${GENERATED_REAL_SOURCE}'")
-    message(STATUS "Linked Wayland header to '${GENERATED_LINK_HEADER}'")
-    message(STATUS "Linked Wayland source to '${GENERATED_LINK_SOURCE}'")
 endfunction()
 
+# Consumers should call this only when they explicitly want their project's
+# verification executables (normally guarded by PROJECT_IS_TOP_LEVEL).
 function(define_test_executables)
     set(OPTIONS)
     set(ONE_VALUE_ARGS)
@@ -617,9 +675,9 @@ function(define_test_executables)
         ${ARGN}
     )
 
-    if(EXISTS "${CMAKE_SOURCE_DIR}/test")
+    if(EXISTS "${PROJECT_SOURCE_DIR}/test")
         file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
-            "${CMAKE_SOURCE_DIR}/test/*.cpp"
+            "${PROJECT_SOURCE_DIR}/test/*.cpp"
         )
 
         if(TEST_SOURCES)
